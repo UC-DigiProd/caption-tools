@@ -3,19 +3,24 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Subtitle Conversion & Shifting Tools</title>
+    <title>UC Batch Subtitle Tools</title>
     <link rel="stylesheet" href="style.css">
 </head>
 <body>
-    
+
+    <div id="loading-overlay" class="overlay">
+        <div class="spinner"></div>
+        <p>Processing files...</p>
+    </div>
+
     <main>
         <section class="tool-card">
-            <h2>SRT to VTT Converter</h2>
-            <p class="instructions">Upload an **.srt** file. It will be converted to the VTT format with the same base filename.</p>
+            <h2>Batch SRT to VTT Converter</h2>
+            <p class="instructions">Select one or more **.srt** files. You will be asked to choose a destination folder.</p>
             
             <form id="converter-form" class="upload-form">
-                <input type="file" id="srt-input" accept=".srt" required>
-                <button type="submit">Convert and Download</button>
+                <input type="file" id="srt-input" accept=".srt" multiple required>
+                <button type="submit">Convert & Save All</button>
             </form>
             <div id="converter-message" class="result-message"></div>
         </section>
@@ -23,186 +28,129 @@
         <hr>
 
         <section class="tool-card">
-            <h2>VTT Timing Shifter</h2>
-            <p class="instructions">Upload a **.vtt** file. All cue timings will be shifted forward by **6 seconds**.</p>
+            <h2>Batch VTT Timing Shifter (+6s)</h2>
+            <p class="instructions">Select one or more **.vtt** files. You will be asked to choose a destination folder.</p>
             
             <form id="shifter-form" class="upload-form">
-                <input type="file" id="vtt-input" accept=".vtt" required>
-                <button type="submit">Shift and Download</button>
+                <input type="file" id="vtt-input" accept=".vtt" multiple required>
+                <button type="submit">Shift & Save All</button>
             </form>
             <div id="shifter-message" class="result-message"></div>
         </section>
     </main>
 
     <script>
-        // --- Core Utility Functions ---
+        const overlay = document.getElementById('loading-overlay');
 
-        /**
-         * Initiates a file download in the browser.
-         */
-        function downloadFile(fileName, content, mimeType = 'text/vtt') {
-            const blob = new Blob([content], { type: mimeType });
-            const url = URL.createObjectURL(blob);
-            const a = document.createElement('a');
-            
-            a.href = url;
-            a.download = fileName;
-            
-            document.body.appendChild(a);
-            a.click();
-            document.body.removeChild(a);
-            
-            URL.revokeObjectURL(url);
+        async function saveFilesToDirectory(filesToSave) {
+            try {
+                if (!window.showDirectoryPicker) {
+                    alert("Your browser does not support choosing save folders. Please use a recent version of Chrome or Edge.");
+                    return false;
+                }
+                const directoryHandle = await window.showDirectoryPicker();
+                overlay.style.display = 'flex'; // Show spinner after folder is picked
+                
+                for (const item of filesToSave) {
+                    const fileHandle = await directoryHandle.getFileHandle(item.name, { create: true });
+                    const writable = await fileHandle.createWritable();
+                    await writable.write(item.content);
+                    await writable.close();
+                }
+                return true;
+            } catch (err) {
+                if (err.name === 'AbortError') return false; 
+                alert("An error occurred: " + err.message);
+                return false;
+            } finally {
+                overlay.style.display = 'none'; // Hide spinner
+            }
         }
-
-        // --- CONVERTER TOOL LOGIC ---
 
         function srtToVtt(srtContent) {
             let vttContent = "WEBVTT\n\n";
             const blocks = srtContent.trim().split(/\r?\n\r?\n/);
-
             blocks.forEach(block => {
                 const lines = block.trim().split(/\r?\n/);
-                
                 if (lines.length > 1 && lines[1].includes('-->')) {
                     let timing = lines[1].replace(/,/g, '.');
                     const text = lines.slice(2).join('\n');
                     vttContent += `${timing}\n${text}\n\n`;
                 }
             });
-            
             return vttContent.trim();
         }
 
-        // --- SHIFTER TOOL LOGIC ---
-        
         const SIX_SECONDS_MS = 6000;
-
         function timeToMs(timeStr) {
             const [h, m, sMs] = timeStr.split(':').map(s => s.trim());
             const [s, ms] = sMs.split('.');
-            
-            return (
-                (parseInt(h) * 3600 + parseInt(m) * 60 + parseInt(s)) * 1000 + 
-                parseInt(ms)
-            );
+            return ((parseInt(h) * 3600 + parseInt(m) * 60 + parseInt(s)) * 1000 + parseInt(ms));
         }
-
         function msToTime(totalMs) {
             if (totalMs < 0) totalMs = 0;
-            
             const ms = totalMs % 1000;
             let totalSeconds = Math.floor(totalMs / 1000);
-            
             const s = totalSeconds % 60;
             totalSeconds = Math.floor(totalSeconds / 60);
-            
             const m = totalSeconds % 60;
             const h = Math.floor(totalSeconds / 60);
-            
-            const format = val => String(val).padStart(2, '0');
-            const msFormat = val => String(val).padStart(3, '0');
-            
-            return `${format(h)}:${format(m)}:${format(s)}.${msFormat(ms)}`;
+            return `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}.${String(ms).padStart(3,'0')}`;
         }
 
         function shiftVtt(vttContent) {
             const lines = vttContent.split(/\r?\n/);
-            let newLines = [];
-            
-            lines.forEach(line => {
+            return lines.map(line => {
                 if (line.includes('-->')) {
-                    const lineParts = line.split(' ');
-                    // Assuming standard format: [START] [-->] [END] [METADATA...]
-                    const timingStr = lineParts[0] + ' ' + lineParts[1] + ' ' + lineParts[2];
-                    const metadata = lineParts.slice(3).join(' ');
-                    
-                    const [startStr, , endStr] = timingStr.split(' ');
-
-                    const startMs = timeToMs(startStr.trim());
-                    const newStartStr = msToTime(startMs + SIX_SECONDS_MS);
-                    
-                    const endMs = timeToMs(endStr.trim());
-                    const newEndStr = msToTime(endMs + SIX_SECONDS_MS);
-                    
-                    newLines.push(`${newStartStr} --> ${newEndStr} ${metadata}`.trim());
-                } else {
-                    newLines.push(line);
+                    const parts = line.split(' ');
+                    const startMs = timeToMs(parts[0]);
+                    const endMs = timeToMs(parts[2]);
+                    const metadata = parts.slice(3).join(' ');
+                    return `${msToTime(startMs + SIX_SECONDS_MS)} --> ${msToTime(endMs + SIX_SECONDS_MS)} ${metadata}`.trim();
                 }
-            });
-            
-            return newLines.join('\n');
+                return line;
+            }).join('\n');
         }
 
-
-        // --- Event Handlers ---
-
-        document.getElementById('converter-form').addEventListener('submit', function(e) {
+        document.getElementById('converter-form').addEventListener('submit', async function(e) {
             e.preventDefault();
-            const fileInput = document.getElementById('srt-input');
+            const files = document.getElementById('srt-input').files;
             const messageDiv = document.getElementById('converter-message');
-            messageDiv.style.display = 'none';
-
-            if (fileInput.files.length === 0) return;
-
-            const file = fileInput.files[0];
-            const reader = new FileReader();
-
-            reader.onload = function(event) {
-                try {
-                    const srtContent = event.target.result;
-                    const vttContent = srtToVtt(srtContent);
-                    
-                    const baseName = file.name.replace(/\.[^/.]+$/, "");
-                    const newFileName = baseName + ".vtt";
-                    
-                    downloadFile(newFileName, vttContent);
-                    
-                    messageDiv.textContent = `Conversion successful! Downloading "${newFileName}".`;
-                    messageDiv.style.display = 'block';
-
-                } catch (error) {
-                    messageDiv.textContent = `Error converting file: ${error.message}`;
-                    messageDiv.style.display = 'block';
-                }
-            };
+            const processedFiles = [];
             
-            reader.readAsText(file, 'utf-8');
+            for (let file of files) {
+                const text = await file.text();
+                processedFiles.push({
+                    name: file.name.replace(/\.[^/.]+$/, "") + ".vtt",
+                    content: srtToVtt(text)
+                });
+            }
+
+            if (await saveFilesToDirectory(processedFiles)) {
+                messageDiv.textContent = `Successfully converted and saved ${processedFiles.length} files.`;
+                messageDiv.style.display = 'block';
+            }
         });
 
-        document.getElementById('shifter-form').addEventListener('submit', function(e) {
+        document.getElementById('shifter-form').addEventListener('submit', async function(e) {
             e.preventDefault();
-            const fileInput = document.getElementById('vtt-input');
+            const files = document.getElementById('vtt-input').files;
             const messageDiv = document.getElementById('shifter-message');
-            messageDiv.style.display = 'none';
+            const processedFiles = [];
 
-            if (fileInput.files.length === 0) return;
+            for (let file of files) {
+                const text = await file.text();
+                processedFiles.push({
+                    name: file.name.replace(/\.[^/.]+$/, "") + "_shifted.vtt",
+                    content: shiftVtt(text)
+                });
+            }
 
-            const file = fileInput.files[0];
-            const reader = new FileReader();
-
-            reader.onload = function(event) {
-                try {
-                    const vttContent = event.target.result;
-                    const shiftedContent = shiftVtt(vttContent);
-                    
-                    const baseName = file.name.replace(/\.[^/.]+$/, "");
-                    const newFileName = baseName + "_shifted.vtt";
-                    
-                    downloadFile(newFileName, shiftedContent);
-                    
-                    messageDiv.textContent = `Shift successful (+6 seconds)! Downloading "${newFileName}".`;
-                    messageDiv.style.display = 'block';
-
-                } catch (error) {
-                    messageDiv.textContent = `Error shifting timings: ${error.message}`;
-                    messageDiv.style.display = 'block';
-                }
-            };
-            
-            reader.readAsText(file, 'utf-8');
+            if (await saveFilesToDirectory(processedFiles)) {
+                messageDiv.textContent = `Successfully shifted and saved ${processedFiles.length} files.`;
+                messageDiv.style.display = 'block';
+            }
         });
-
     </script>
 </body>
 </html>
