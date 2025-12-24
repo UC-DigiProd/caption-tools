@@ -40,117 +40,134 @@
     </main>
 
     <script>
-        const overlay = document.getElementById('loading-overlay');
+const overlay = document.getElementById('loading-overlay');
 
-        async function saveFilesToDirectory(filesToSave) {
-            try {
-                if (!window.showDirectoryPicker) {
-                    alert("Your browser does not support choosing save folders. Please use a recent version of Chrome or Edge.");
-                    return false;
-                }
-                const directoryHandle = await window.showDirectoryPicker();
-                overlay.style.display = 'flex'; // Show spinner after folder is picked
-                
-                for (const item of filesToSave) {
-                    const fileHandle = await directoryHandle.getFileHandle(item.name, { create: true });
-                    const writable = await fileHandle.createWritable();
-                    await writable.write(item.content);
-                    await writable.close();
-                }
-                return true;
-            } catch (err) {
-                if (err.name === 'AbortError') return false; 
-                alert("An error occurred: " + err.message);
-                return false;
-            } finally {
-                overlay.style.display = 'none'; // Hide spinner
-            }
-        }
+/**
+ * processBatch handles the final execution when "Save All" is clicked.
+ */
+async function processBatch(fileInputId, type) {
+    const fileInput = document.getElementById(fileInputId);
+    const files = fileInput.files;
 
-        function srtToVtt(srtContent) {
-            let vttContent = "WEBVTT\n\n";
-            const blocks = srtContent.trim().split(/\r?\n\r?\n/);
-            blocks.forEach(block => {
-                const lines = block.trim().split(/\r?\n/);
-                if (lines.length > 1 && lines[1].includes('-->')) {
-                    let timing = lines[1].replace(/,/g, '.');
-                    const text = lines.slice(2).join('\n');
-                    vttContent += `${timing}\n${text}\n\n`;
-                }
-            });
-            return vttContent.trim();
-        }
+    // Check if files were actually selected first
+    if (files.length === 0) {
+        alert("Please select or drop files first.");
+        return;
+    }
 
-        const SIX_SECONDS_MS = 6000;
-        function timeToMs(timeStr) {
-            const [h, m, sMs] = timeStr.split(':').map(s => s.trim());
-            const [s, ms] = sMs.split('.');
-            return ((parseInt(h) * 3600 + parseInt(m) * 60 + parseInt(s)) * 1000 + parseInt(ms));
+    // Step 2 & 3: Open the Directory Picker (Save location)
+    let directoryHandle;
+    try {
+        if (!window.showDirectoryPicker) {
+            alert("Your browser does not support folder saving. Please use Chrome or Edge.");
+            return;
         }
-        function msToTime(totalMs) {
-            if (totalMs < 0) totalMs = 0;
-            const ms = totalMs % 1000;
-            let totalSeconds = Math.floor(totalMs / 1000);
-            const s = totalSeconds % 60;
-            totalSeconds = Math.floor(totalSeconds / 60);
-            const m = totalSeconds % 60;
-            const h = Math.floor(totalSeconds / 60);
-            return `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}.${String(ms).padStart(3,'0')}`;
-        }
+        directoryHandle = await window.showDirectoryPicker();
+    } catch (err) {
+        // User cancelled the folder picker
+        console.log("Folder selection cancelled.");
+        return;
+    }
 
-        function shiftVtt(vttContent) {
-            const lines = vttContent.split(/\r?\n/);
-            return lines.map(line => {
-                if (line.includes('-->')) {
-                    const parts = line.split(' ');
-                    const startMs = timeToMs(parts[0]);
-                    const endMs = timeToMs(parts[2]);
-                    const metadata = parts.slice(3).join(' ');
-                    return `${msToTime(startMs + SIX_SECONDS_MS)} --> ${msToTime(endMs + SIX_SECONDS_MS)} ${metadata}`.trim();
-                }
-                return line;
-            }).join('\n');
-        }
+    // Step 5: Immediately after folder is picked and "Save All" logic continues, show spinner
+    overlay.style.display = 'flex';
 
-        document.getElementById('converter-form').addEventListener('submit', async function(e) {
-            e.preventDefault();
-            const files = document.getElementById('srt-input').files;
-            const messageDiv = document.getElementById('converter-message');
-            const processedFiles = [];
-            
-            for (let file of files) {
-                const text = await file.text();
-                processedFiles.push({
-                    name: file.name.replace(/\.[^/.]+$/, "") + ".vtt",
-                    content: srtToVtt(text)
-                });
+    try {
+        // Step 6: Loop through files, convert/shift, and write
+        for (let file of files) {
+            const text = await file.text();
+            let finalContent = "";
+            let finalName = "";
+
+            if (type === 'convert') {
+                finalContent = srtToVtt(text);
+                finalName = file.name.replace(/\.[^/.]+$/, "") + ".vtt";
+            } else {
+                finalContent = shiftVtt(text);
+                finalName = file.name.replace(/\.[^/.]+$/, "") + "_shifted.vtt";
             }
 
-            if (await saveFilesToDirectory(processedFiles)) {
-                messageDiv.textContent = `Successfully converted and saved ${processedFiles.length} files.`;
-                messageDiv.style.display = 'block';
-            }
-        });
+            // Write the file to the chosen folder
+            const fileHandle = await directoryHandle.getFileHandle(finalName, { create: true });
+            const writable = await fileHandle.createWritable();
+            await writable.write(finalContent);
+            await writable.close();
+        }
 
-        document.getElementById('shifter-form').addEventListener('submit', async function(e) {
-            e.preventDefault();
-            const files = document.getElementById('vtt-input').files;
-            const messageDiv = document.getElementById('shifter-message');
-            const processedFiles = [];
+        // Step 7: Success!
+        const msgId = type === 'convert' ? 'converter-message' : 'shifter-message';
+        const messageDiv = document.getElementById(msgId);
+        messageDiv.textContent = `Success! ${files.length} files saved to your folder.`;
+        messageDiv.style.display = 'block';
+        messageDiv.style.color = "#009ABC"; // UC Blue
+        messageDiv.style.fontWeight = "700";
 
-            for (let file of files) {
-                const text = await file.text();
-                processedFiles.push({
-                    name: file.name.replace(/\.[^/.]+$/, "") + "_shifted.vtt",
-                    content: shiftVtt(text)
-                });
-            }
+    } catch (err) {
+        alert("Processing error: " + err.message);
+    } finally {
+        // Step 7: Hide Spinner
+        overlay.style.display = 'none';
+    }
+}
 
-            if (await saveFilesToDirectory(processedFiles)) {
-                messageDiv.textContent = `Successfully shifted and saved ${processedFiles.length} files.`;
-                messageDiv.style.display = 'block';
-            }
-        });
+// --- Conversion Logic Functions ---
+
+function srtToVtt(srtContent) {
+    let vttContent = "WEBVTT\n\n";
+    const blocks = srtContent.trim().split(/\r?\n\r?\n/);
+    blocks.forEach(block => {
+        const lines = block.trim().split(/\r?\n/);
+        if (lines.length > 1 && lines[1].includes('-->')) {
+            let timing = lines[1].replace(/,/g, '.');
+            const text = lines.slice(2).join('\n');
+            vttContent += `${timing}\n${text}\n\n`;
+        }
+    });
+    return vttContent.trim();
+}
+
+const SIX_SECONDS_MS = 6000;
+function timeToMs(timeStr) {
+    const [h, m, sMs] = timeStr.split(':').map(s => s.trim());
+    const [s, ms] = sMs.split('.');
+    return ((parseInt(h) * 3600 + parseInt(m) * 60 + parseInt(s)) * 1000 + parseInt(ms));
+}
+
+function msToTime(totalMs) {
+    if (totalMs < 0) totalMs = 0;
+    const ms = totalMs % 1000;
+    let totalSeconds = Math.floor(totalMs / 1000);
+    const s = totalSeconds % 60;
+    const m = Math.floor(totalSeconds / 60) % 60;
+    const h = Math.floor(totalSeconds / 3600);
+    return `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}.${String(ms).padStart(3,'0')}`;
+}
+
+function shiftVtt(vttContent) {
+    const lines = vttContent.split(/\r?\n/);
+    return lines.map(line => {
+        if (line.includes('-->')) {
+            const parts = line.split(' ');
+            const startMs = timeToMs(parts[0]);
+            const endMs = timeToMs(parts[2]);
+            const metadata = parts.slice(3).join(' ');
+            return `${msToTime(startMs + SIX_SECONDS_MS)} --> ${msToTime(endMs + SIX_SECONDS_MS)} ${metadata}`.trim();
+        }
+        return line;
+    }).join('\n');
+}
+
+// --- Event Listeners ---
+
+document.getElementById('converter-form').addEventListener('submit', function(e) {
+    e.preventDefault();
+    processBatch('srt-input', 'convert');
+});
+
+document.getElementById('shifter-form').addEventListener('submit', function(e) {
+    e.preventDefault();
+    processBatch('vtt-input', 'shift');
+});
     </script>
 </body>
 </html>
