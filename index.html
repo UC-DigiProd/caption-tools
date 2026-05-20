@@ -1,173 +1,271 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>UC Batch Subtitle Tools</title>
-    <link rel="stylesheet" href="style.css">
-</head>
-<body>
+<style>
+    /* Import Figtree font */
+    @import url('https://fonts.googleapis.com/css2?family=Figtree:wght@400;600;700&display=swap');
 
-    <div id="loading-overlay" class="overlay">
-        <div class="spinner"></div>
-        <p>Processing files...</p>
+    .converter-container {
+        max-width: 650px;
+        margin: 20px auto;
+        padding: 20px;
+        border: 1px solid #3f093c;
+        border-radius: 8px;
+        font-family: 'Figtree', 'Helvetica Neue', Helvetica, Arial, sans-serif;
+        color: #414042;
+        background-color: #fff;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+    }
+    .converter-container h3 {
+        color: #3f093c;
+        margin-top: 0;
+        margin-bottom: 5px;
+    }
+    .converter-container .subtitle {
+        font-size: 0.9em;
+        color: #666;
+        margin-bottom: 20px;
+    }
+    
+    /* Upload Area */
+    .upload-area {
+        border: 2px dashed #bba4ba;
+        border-radius: 8px;
+        padding: 40px 20px;
+        text-align: center;
+        background-color: #fcfafc;
+        margin-bottom: 20px;
+        transition: all 0.2s ease;
+    }
+    .upload-area.dragover {
+        background-color: #f1e9f1;
+        border-color: #3f093c;
+    }
+    .upload-area input[type="file"] {
+        display: none;
+    }
+    .upload-label {
+        color: #3f093c;
+        font-weight: 600;
+        cursor: pointer;
+        font-size: 1.1em;
+        display: inline-block;
+        padding: 10px 20px;
+        background-color: #f1e9f1;
+        border-radius: 4px;
+        border: 1px solid #e2d2e2;
+        transition: background-color 0.2s ease;
+    }
+    .upload-label:hover {
+        background-color: #e2d2e2;
+    }
+    .upload-hint {
+        display: block;
+        margin-top: 10px;
+        font-size: 0.85em;
+        color: #888;
+    }
+
+    /* File List */
+    .file-list {
+        margin-bottom: 20px;
+        font-size: 0.9em;
+        color: #333;
+        background: #f9f9f9;
+        border-radius: 4px;
+        max-height: 150px;
+        overflow-y: auto;
+    }
+    .file-item {
+        padding: 8px 12px;
+        border-bottom: 1px solid #eee;
+        display: flex;
+        justify-content: space-between;
+    }
+    .file-item:last-child {
+        border-bottom: none;
+    }
+
+    /* Buttons */
+    .button-group {
+        display: flex;
+        gap: 10px;
+    }
+    .converter-container button {
+        background-color: #3f093c;
+        color: white;
+        padding: 12px 15px;
+        border: none;
+        border-radius: 4px;
+        cursor: pointer;
+        font-size: 1em;
+        font-family: inherit;
+        font-weight: 600;
+        transition: background-color 0.2s ease;
+        flex-grow: 1;
+    }
+    .converter-container button:hover {
+        background-color: #260524;
+    }
+    .converter-container button:disabled {
+        background-color: #ccc;
+        cursor: not-allowed;
+    }
+    #resetBtn {
+        background-color: #A9A9A9;
+    }
+    #resetBtn:hover {
+        background-color: #808080;
+    }
+
+    /* Status */
+    .status-msg {
+        margin-top: 15px;
+        font-size: 0.95em;
+        font-weight: bold;
+        color: #3f093c;
+        text-align: center;
+    }
+</style>
+
+<div class="converter-container">
+    <h3>SRT to VTT Caption Converter</h3>
+    <div class="subtitle">Convert standard .srt caption files to web-accessible .vtt formats in bulk. Files are processed instantly in your browser.</div>
+
+    <div class="upload-area" id="dropZone">
+        <label for="fileInput" class="upload-label">Select .srt files</label>
+        <span class="upload-hint">or drag and drop them here</span>
+        <input type="file" id="fileInput" accept=".srt" multiple>
     </div>
 
-    <main>
-        <section class="tool-card">
-            <h2>Batch SRT to VTT converter</h2>
-            <p class="instructions">Select one or more **.srt** files. You will be asked to choose a destination folder.</p>
-            
-            <form id="converter-form" class="upload-form">
-                <input type="file" id="srt-input" accept=".srt" multiple required>
-                <button type="submit">Convert & save all</button>
-            </form>
-            <div id="converter-message" class="result-message"></div>
-        </section>
+    <div id="fileListContainer" class="file-list" style="display: none;"></div>
 
-        <hr>
+    <div class="button-group">
+        <button id="convertBtn" onclick="processFiles()" disabled>Convert & Download All</button>
+        <button id="resetBtn" onclick="resetConverter()">Clear</button>
+    </div>
 
-        <section class="tool-card">
-            <h2>Batch VTT caption timing shifter (+6s)</h2>
-            <p class="instructions">Select one or more **.vtt** files. You will be asked to choose a destination folder.</p>
-            
-            <form id="shifter-form" class="upload-form">
-                <input type="file" id="vtt-input" accept=".vtt" multiple required>
-                <button type="submit">Shift & save all</button>
-            </form>
-            <div id="shifter-message" class="result-message"></div>
-        </section>
-    </main>
+    <div id="conversionStatus" class="status-msg"></div>
+</div>
 
-    <script>
-const overlay = document.getElementById('loading-overlay');
+<script>
+    const fileInput = document.getElementById('fileInput');
+    const dropZone = document.getElementById('dropZone');
+    const fileListContainer = document.getElementById('fileListContainer');
+    const convertBtn = document.getElementById('convertBtn');
+    const statusDiv = document.getElementById('conversionStatus');
+    
+    let selectedFiles = [];
 
-/**
- * processBatch handles the final execution when "Save All" is clicked.
- */
-async function processBatch(fileInputId, type) {
-    const fileInput = document.getElementById(fileInputId);
-    const files = fileInput.files;
-
-    // Check if files were actually selected first
-    if (files.length === 0) {
-        alert("Please select or drop files first.");
-        return;
-    }
-
-    // Step 2 & 3: Open the Directory Picker (Save location)
-    let directoryHandle;
-    try {
-        if (!window.showDirectoryPicker) {
-            alert("Your browser does not support folder saving. Please use Chrome or Edge.");
-            return;
-        }
-        directoryHandle = await window.showDirectoryPicker();
-    } catch (err) {
-        // User cancelled the folder picker
-        console.log("Folder selection cancelled.");
-        return;
-    }
-
-    // Step 5: Immediately after folder is picked and "Save All" logic continues, show spinner
-    overlay.style.display = 'flex';
-
-    try {
-        // Step 6: Loop through files, convert/shift, and write
-        for (let file of files) {
-            const text = await file.text();
-            let finalContent = "";
-            let finalName = "";
-
-            if (type === 'convert') {
-                finalContent = srtToVtt(text);
-                finalName = file.name.replace(/\.[^/.]+$/, "") + ".vtt";
-            } else {
-                finalContent = shiftVtt(text);
-                finalName = file.name.replace(/\.[^/.]+$/, "") + "_shifted.vtt";
-            }
-
-            // Write the file to the chosen folder
-            const fileHandle = await directoryHandle.getFileHandle(finalName, { create: true });
-            const writable = await fileHandle.createWritable();
-            await writable.write(finalContent);
-            await writable.close();
-        }
-
-        // Step 7: Success!
-        const msgId = type === 'convert' ? 'converter-message' : 'shifter-message';
-        const messageDiv = document.getElementById(msgId);
-        messageDiv.textContent = `Success! ${files.length} files saved to your folder.`;
-        messageDiv.style.display = 'block';
-        messageDiv.style.color = "#009ABC"; // UC Blue
-        messageDiv.style.fontWeight = "700";
-
-    } catch (err) {
-        alert("Processing error: " + err.message);
-    } finally {
-        // Step 7: Hide Spinner
-        overlay.style.display = 'none';
-    }
-}
-
-// --- Conversion Logic Functions ---
-
-function srtToVtt(srtContent) {
-    let vttContent = "WEBVTT\n\n";
-    const blocks = srtContent.trim().split(/\r?\n\r?\n/);
-    blocks.forEach(block => {
-        const lines = block.trim().split(/\r?\n/);
-        if (lines.length > 1 && lines[1].includes('-->')) {
-            let timing = lines[1].replace(/,/g, '.');
-            const text = lines.slice(2).join('\n');
-            vttContent += `${timing}\n${text}\n\n`;
+    // --- File Selection Handling ---
+    
+    fileInput.addEventListener('change', handleFileSelect);
+    
+    // Drag and Drop Events
+    dropZone.addEventListener('dragover', (e) => {
+        e.preventDefault();
+        dropZone.classList.add('dragover');
+    });
+    
+    dropZone.addEventListener('dragleave', () => {
+        dropZone.classList.remove('dragover');
+    });
+    
+    dropZone.addEventListener('drop', (e) => {
+        e.preventDefault();
+        dropZone.classList.remove('dragover');
+        if (e.dataTransfer.files.length) {
+            fileInput.files = e.dataTransfer.files;
+            handleFileSelect();
         }
     });
-    return vttContent.trim();
-}
 
-const SIX_SECONDS_MS = 6000;
-function timeToMs(timeStr) {
-    const [h, m, sMs] = timeStr.split(':').map(s => s.trim());
-    const [s, ms] = sMs.split('.');
-    return ((parseInt(h) * 3600 + parseInt(m) * 60 + parseInt(s)) * 1000 + parseInt(ms));
-}
-
-function msToTime(totalMs) {
-    if (totalMs < 0) totalMs = 0;
-    const ms = totalMs % 1000;
-    let totalSeconds = Math.floor(totalMs / 1000);
-    const s = totalSeconds % 60;
-    const m = Math.floor(totalSeconds / 60) % 60;
-    const h = Math.floor(totalSeconds / 3600);
-    return `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}.${String(ms).padStart(3,'0')}`;
-}
-
-function shiftVtt(vttContent) {
-    const lines = vttContent.split(/\r?\n/);
-    return lines.map(line => {
-        if (line.includes('-->')) {
-            const parts = line.split(' ');
-            const startMs = timeToMs(parts[0]);
-            const endMs = timeToMs(parts[2]);
-            const metadata = parts.slice(3).join(' ');
-            return `${msToTime(startMs + SIX_SECONDS_MS)} --> ${msToTime(endMs + SIX_SECONDS_MS)} ${metadata}`.trim();
+    function handleFileSelect() {
+        // Filter out non-SRT files just in case
+        selectedFiles = Array.from(fileInput.files).filter(file => file.name.toLowerCase().endsWith('.srt'));
+        
+        if (selectedFiles.length === 0) {
+            fileListContainer.style.display = 'none';
+            convertBtn.disabled = true;
+            statusDiv.textContent = 'Please select valid .srt files.';
+            return;
         }
-        return line;
-    }).join('\n');
-}
 
-// --- Event Listeners ---
+        // Build UI list
+        fileListContainer.innerHTML = '';
+        selectedFiles.forEach(file => {
+            const item = document.createElement('div');
+            item.className = 'file-item';
+            item.innerHTML = `<span>📄 ${file.name}</span> <span style="color:#666;">(${(file.size / 1024).toFixed(1)} KB)</span>`;
+            fileListContainer.appendChild(item);
+        });
 
-document.getElementById('converter-form').addEventListener('submit', function(e) {
-    e.preventDefault();
-    processBatch('srt-input', 'convert');
-});
+        fileListContainer.style.display = 'block';
+        convertBtn.disabled = false;
+        statusDiv.textContent = `${selectedFiles.length} file(s) ready for conversion.`;
+    }
 
-document.getElementById('shifter-form').addEventListener('submit', function(e) {
-    e.preventDefault();
-    processBatch('vtt-input', 'shift');
-});
-    </script>
-</body>
-</html>
+    // --- Conversion Logic ---
+
+    async function processFiles() {
+        if (selectedFiles.length === 0) return;
+        
+        statusDiv.textContent = `Converting ${selectedFiles.length} file(s)...`;
+        convertBtn.disabled = true;
+
+        for (let i = 0; i < selectedFiles.length; i++) {
+            const file = selectedFiles[i];
+            await convertAndDownload(file);
+        }
+
+        statusDiv.textContent = `✓ Successfully converted and downloaded ${selectedFiles.length} file(s).`;
+        convertBtn.disabled = false;
+    }
+
+    function convertAndDownload(file) {
+        return new Promise((resolve, reject) => {
+            const reader = new FileReader();
+            
+            reader.onload = function(e) {
+                const srtText = e.target.result;
+                
+                // VTT Conversion Math:
+                // 1. VTT files must start with WEBVTT
+                // 2. SRT timestamps use commas (00:00:01,000), VTT uses periods (00:00:01.000)
+                let vttText = "WEBVTT\n\n" + srtText.replace(/(\d{2}:\d{2}:\d{2}),(\d{3})/g, '$1.$2');
+                
+                // Create a downloadable Blob
+                const blob = new Blob([vttText], { type: 'text/vtt' });
+                const url = URL.createObjectURL(blob);
+                
+                // Generate new filename
+                const newFilename = file.name.replace(/\.srt$/i, '.vtt');
+                
+                // Create invisible anchor to trigger download
+                const a = document.createElement('a');
+                a.style.display = 'none';
+                a.href = url;
+                a.download = newFilename;
+                document.body.appendChild(a);
+                
+                a.click();
+                
+                // Cleanup
+                setTimeout(() => {
+                    document.body.removeChild(a);
+                    window.URL.revokeObjectURL(url);
+                    resolve();
+                }, 100); 
+            };
+            
+            reader.onerror = reject;
+            reader.readAsText(file);
+        });
+    }
+
+    function resetConverter() {
+        fileInput.value = '';
+        selectedFiles = [];
+        fileListContainer.style.display = 'none';
+        fileListContainer.innerHTML = '';
+        convertBtn.disabled = true;
+        statusDiv.textContent = '';
+    }
+</script>
